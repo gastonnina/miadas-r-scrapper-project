@@ -1,0 +1,103 @@
+---
+title: "Untitled"
+output: github_document
+---
+Escanea basado en html y guarda en csv
+
+# Codigo generico para raspado web
+```{r generico}
+# Cargamos librerias necesarias
+library(httr)
+library(rvest)
+library(dplyr)
+
+# Configurar agente de usuario para evitar bloqueos
+set_user_agent <- function() {
+  httr::set_config(httr::user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"))
+}
+
+# Crear lista de URLs de las páginas a extraer
+crear_lista_paginas <- function(base_url, num_paginas) {
+  paginas <- list()
+  for (i in 1:num_paginas) {
+    paginas[[i]] <- paste0(base_url, i)
+  }
+  return(paginas)
+}
+
+```
+
+# Sitio de Tienda TOTTO
+Tienda virtual totto, despues de ver el DOM podemos ver que hay un ajax que trae el html completo de cada pagina y tambien un json dentro del mismo html
+```{r tienda}
+# Extraer datos de una página específica
+extraer_datos_pagina_totto <- function(url) {
+  # Intentar cargar el HTML de la página
+  document <- tryCatch(
+    read_html(url, user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"),
+    error = function(e) {
+      message(paste("Error al cargar:", url))
+      return(NULL)
+    }
+  )
+
+  # Si la página no pudo cargarse, retornamos NULL
+  if (is.null(document)) return(NULL)
+
+  # Extraemos los productos basados en la clase del div
+  html_products <- document %>% html_elements("div._banner-title")
+
+  # Obtenemos los datos necesarios
+  product_urls <- html_products %>% html_element("a") %>% html_attr("href")
+
+  product_images <- html_products %>% html_element("img") %>% html_attr("src")
+  product_names <- html_products %>% html_element("h3 span") %>% html_text(trim = TRUE)
+  product_prices <- html_products %>% html_element("span.__item-price") %>% html_text(trim = TRUE)
+
+  # Creamos un data.frame con los datos extraídos
+  return(data.frame(
+    url = product_urls,
+    image = product_images,
+    name = product_names,
+    price = product_prices,
+    stringsAsFactors = FALSE
+  ))
+}
+
+# Función principal para recorrer todas las páginas y compilar los datos
+extraer_datos_sitio_totto <- function(base_url, num_paginas) {
+  # Configurar agente de usuario
+  set_user_agent()
+
+  # Crear lista de páginas a extraer
+  paginas <- crear_lista_paginas(base_url, num_paginas)
+
+  # Inicializar un data.frame vacío para almacenar los resultados
+  datos_totto <- data.frame(url = character(), image = character(), name = character(), price = character(), stringsAsFactors = FALSE)
+
+  # Iterar sobre cada página
+  for (pagina in paginas) {
+    print(paste("Extrayendo datos de:", pagina))
+    datos_pagina <- extraer_datos_pagina_totto(pagina)
+
+    # Si se obtuvieron datos, los agregamos al data.frame datos totto
+    if (!is.null(datos_pagina)) {
+      datos_totto <- bind_rows(datos_totto, datos_pagina)
+    }
+  }
+
+  return(datos_totto)
+}
+
+# Parámetros de configuración
+base_url <- "https://bo.totto.com/buscapagina?fq=C%3a%2f82%2f&PS=48&sl=ae85c755-2e56-4945-a435-89444d09dcb2&cc=48&sm=0&PageNumber="
+num_paginas <- 8
+nombre_archivo <- "_data/products.RData"
+
+# Ejecutar el proceso completo
+productos <- extraer_datos_sitio_totto(base_url, num_paginas)
+
+# Guardar en un archivo .RData
+save(productos, file=nombre_archivo)
+print(paste("Datos guardados en:", nombre_archivo))
+```
