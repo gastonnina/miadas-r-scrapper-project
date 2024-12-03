@@ -10,6 +10,7 @@ Escanea basado en html y guarda en csv
 library(httr)
 library(rvest)
 library(dplyr)
+library(jsonlite)
 
 # Configurar agente de usuario para evitar bloqueos
 set_user_agent <- function() {
@@ -24,7 +25,15 @@ crear_lista_paginas <- function(base_url, num_paginas) {
   }
   return(paginas)
 }
-
+slugify <- function(text) {
+  # Convert to lowercase
+  text <- tolower(text)
+  # Replace spaces and special characters with hyphens
+  text <- gsub("[^a-z0-9]+", "-", text)
+  # Remove leading/trailing hyphens
+  text <- gsub("(^-|-$)", "", text)
+  return(text)
+}
 ```
 
 # Sitio de Tienda TOTTO
@@ -41,8 +50,10 @@ extraer_datos_pagina_totto <- function(url) {
     }
   )
 
+
   # Si la página no pudo cargarse, retornamos NULL
-  if (is.null(document)) return(NULL)
+  if (is.null(document))
+    return(NULL)
 
   # Extraemos los productos basados en la clase del div
   html_products <- document %>% html_elements("div._banner-title")
@@ -55,13 +66,15 @@ extraer_datos_pagina_totto <- function(url) {
   product_prices <- html_products %>% html_element("span.__item-price") %>% html_text(trim = TRUE)
 
   # Creamos un data.frame con los datos extraídos
-  return(data.frame(
-    url = product_urls,
-    image = product_images,
-    name = product_names,
-    price = product_prices,
-    stringsAsFactors = FALSE
-  ))
+  return(
+    data.frame(
+      url = product_urls,
+      image = product_images,
+      name = product_names,
+      price = product_prices,
+      stringsAsFactors = FALSE
+    )
+  )
 }
 
 # Función principal para recorrer todas las páginas y compilar los datos
@@ -73,7 +86,13 @@ extraer_datos_sitio_totto <- function(base_url, num_paginas) {
   paginas <- crear_lista_paginas(base_url, num_paginas)
 
   # Inicializar un data.frame vacío para almacenar los resultados
-  datos_totto <- data.frame(url = character(), image = character(), name = character(), price = character(), stringsAsFactors = FALSE)
+  datos_totto <- data.frame(
+    url = character(),
+    image = character(),
+    name = character(),
+    price = character(),
+    stringsAsFactors = FALSE
+  )
 
   # Iterar sobre cada página
   for (pagina in paginas) {
@@ -94,10 +113,188 @@ base_url <- "https://bo.totto.com/buscapagina?fq=C%3a%2f82%2f&PS=48&sl=ae85c755-
 num_paginas <- 8
 nombre_archivo <- "_data/products.RData"
 
+
 # Ejecutar el proceso completo
 productos <- extraer_datos_sitio_totto(base_url, num_paginas)
 
 # Guardar en un archivo .RData
-save(productos, file=nombre_archivo)
+save(productos, file = nombre_archivo)
 print(paste("Datos guardados en:", nombre_archivo))
 ```
+# Sitio de Noticias
+
+## Periodico "El Deber"
+Despues de revisar el sitio del deber se puede e irnos a una categoria, podemos ver que el ver mas noticias carga un ajax con un JSON con el cual construye la visualizacion, probrando con los parametros y quitando el slug que corresponde a categoria podemos traer todas las noticias, por paginas que especifiquemos.
+```{r noticias_deber}
+# Crear lista de URLs de las páginas a extraer
+crear_lista_paginas_deber <- function(base_url, num_paginas, num_items = 50) {
+
+  paginas <- list()
+  for (i in 1:num_paginas) {
+    # Crear la URL con los parámetros from, to y slug
+    from = (i - 1) * num_items
+    to = i * num_items
+    paginas[[i]] <- paste0(base_url, "?from=", from, "&to=", to)
+  }
+  return(paginas)
+}
+# Extraer datos de una página específica
+extraer_datos_pagina_deber <- function(url) {
+  # Intentar cargar el HTML de la página
+  document <- tryCatch(
+    GET(url, user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"),
+    error = function(e) {
+      message(paste("Error al cargar:", url))
+      return(NULL)
+    }
+  )
+
+  # Si la página no pudo cargarse, retornamos NULL
+  if (is.null(document))
+    return(NULL)
+
+  # Parsear el contenido JSON
+  content <- content(document, "text")
+  json_data <- fromJSON(content)
+  return(
+    data.frame(
+      fecha = json_data$PublicationDate,
+      titular = json_data$Title_en,
+      medio = "El Deber",
+      # Agregar un campo fijo
+      url = paste0(
+        "https://eldeber.com.bo/",
+        slugify(json_data$Nodes_en[1]),
+        "/",
+        json_data$Url,
+        "_",
+        json_data$Id
+      ),
+      stringsAsFactors = FALSE
+    )
+  )
+}
+
+# Función principal para recorrer todas las páginas y compilar los datos
+extraer_datos_sitio_deber <- function(base_url, num_paginas) {
+  # Configurar agente de usuario
+  set_user_agent()
+
+  # Crear lista de páginas a extraer
+  paginas <- crear_lista_paginas_deber(base_url, num_paginas)
+
+  # Inicializar un data.frame vacío para almacenar los resultados
+  datos_deber <- data.frame(
+    fecha = character(),
+    titular = character(),
+    medio = character(),
+    url = character(),
+    stringsAsFactors = FALSE
+  )
+
+  # Iterar sobre cada página
+  for (pagina in paginas) {
+    print(paste("Extrayendo datos de:", pagina))
+    datos_pagina <- extraer_datos_pagina_deber(pagina)
+
+    # Si se obtuvieron datos, los agregamos al data.frame datos totto
+    if (!is.null(datos_pagina)) {
+      datos_deber <- bind_rows(datos_deber, datos_pagina)
+    }
+  }
+
+  return(datos_deber)
+}
+# rm(list=ls())
+
+```
+## Periodico "La Prensa"
+Analizando el codigo vemos que la pagina esta desarrollada en Drupal y que ingresando a una página de categoria, si presionamos en paginador este actualiza por ajax la pagina, pero es complicado replicar el ajax por la session. Entonces se puede abrir la pagina en una nueva pestaña con los parametros `?q=views/ajax&page=2` los cuales podemos reutilizar
+```{r noticias_prensa}
+# Extraer datos de una página específica
+extraer_datos_pagina_prensa <- function(url) {
+  # Intentar cargar el HTML de la página
+  document <- tryCatch(
+    read_html(url, user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"),
+    error = function(e) {
+      message(paste("Error al cargar:", url))
+      return(NULL)
+    }
+  )
+
+  # Si la página no pudo cargarse, retornamos NULL
+  if (is.null(document))
+    return(NULL)
+
+  # Extraemos los productos basados en la clase del div
+  html_products <- document %>% html_elements("div.views-row")
+
+  # Obtenemos los datos necesarios
+  titular <- html_products %>% html_element("h2 a") %>% html_text(trim = TRUE)
+  url <- html_products %>% html_element("h2 a") %>% html_attr("href")
+  fecha <- html_products %>% html_element("time") %>% html_attr("datetime")
+  # Creamos un data.frame con los datos extraídos
+  return(
+    data.frame(
+      fecha = fecha,
+      titular = titular,
+      url = paste0("https://laprensa.bo", gsub("index.php/", "", url)),
+      medio = "La Prensa",
+      stringsAsFactors = FALSE
+    )
+  )
+}
+extraer_datos_sitio_prensa <- function(base_url, num_paginas) {
+  # Configurar agente de usuario
+  set_user_agent()
+
+  # Crear lista de páginas a extraer
+  paginas <- crear_lista_paginas(base_url, num_paginas)
+
+  # Inicializar un data.frame vacío para almacenar los resultados
+  datos_prensa <- data.frame(
+    fecha = character(),
+    titular = character(),
+    medio = character(),
+    url = character(),
+    stringsAsFactors = FALSE
+  )
+
+  # Iterar sobre cada página
+  for (pagina in paginas) {
+    print(paste("Extrayendo datos de:", pagina))
+    datos_pagina <- extraer_datos_pagina_prensa(pagina)
+
+    # Si se obtuvieron datos, los agregamos al data.frame datos totto
+    if (!is.null(datos_pagina)) {
+      datos_prensa <- bind_rows(datos_prensa, datos_pagina)
+    }
+  }
+
+  return(datos_prensa)
+}
+```
+## Noticias
+
+```{r noticias}
+# Parámetros de configuración General
+num_paginas <- 5
+nombre_archivo <- "_data/noticias.RData"
+# El Deber
+base_url <- "https://eldeber.com.bo/api/news/getMore"
+noticias_deber <- extraer_datos_sitio_deber(base_url, num_paginas)
+
+# La Prensa
+base_url <- "https://laprensa.bo/politica?q=views/ajax&page="
+noticias_prensa <- extraer_datos_sitio_prensa(base_url, num_paginas)
+
+# Merge de dataframes
+noticias <- bind_rows(noticias_deber, noticias_prensa)
+
+# Guardar en un archivo .RData
+save(noticias, file = nombre_archivo)
+print(paste("Datos guardados en:", nombre_archivo))
+```
+
+
+
