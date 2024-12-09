@@ -16,13 +16,15 @@ library(rvest)     # Para extraer y parsear contenido HTML
 library(dplyr)     # Para manipulación de datos
 library(jsonlite)  # Para manejar datos JSON
 library(stringr)   # Para trabajar con cadenas de texto
+library(openssl)   # Para codificar base64
+library(lubridate) # Para fechas
 ```
 
 # Configuración General
 
 ```{r configuracion_general}
 # Definimos el número de páginas a scrapear
-num_paginas <- 5
+num_paginas <- 1
 
 # Definimos el agente de usuario para simular una solicitud desde un navegador
 agente_usuario <- "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
@@ -63,8 +65,8 @@ crear_slug <- function(texto) {
     str_replace_all("(^-|-$)", "")                # Eliminamos guiones al inicio o final
 }
 ```
-
-# Scraping: Tienda "TOTTO"
+# Scraping Tiendas
+## Scraping: Tienda "TOTTO"
 
 scrapy HTML DOM, despues de ver el DOM podemos ver que hay un ajax que trae el html completo de cada pagina y tambien un json dentro del mismo html
 
@@ -101,6 +103,8 @@ extraer_datos_totto <- function(url) {
       str_replace_all(",", ".") %>%  # convertimos comas en puntos
       as.numeric()
     ,
+    fecha = today(),
+    tienda = "totto",
     stringsAsFactors = FALSE
   )
 }
@@ -117,6 +121,93 @@ extraer_datos_sitio_totto <- function(url_base, num_paginas) {
   )
 }
 ```
+
+## Scraping: Tienda Multicenter
+
+scrapy GraphQL, base64encode, urlencode, esta tienda cuemnta con una recarga en "Mosrar mas Productos"
+![Tienda multicenter_01](_fig/tienda_multicenter_01.png)
+que cuando inspeccionamos parece ser un graphQL enviando parametros por GET codificado url, procedemos a decodificar y vemos que es un json
+![Tienda multicenter_02](_fig/tienda_multicenter_02.png)
+vemos que hay otro parametro que esta encriptado posiblemente base64
+![Tienda multicenter_03](_fig/tienda_multicenter_03.png)
+por lo que decodificamos en base 64 y podemos ver otro JSON
+![Tienda multicenter_04](_fig/tienda_multicenter_04.png)
+donde apreciamos parametros de paginacion
+![Tienda multicenter_05](_fig/tienda_multicenter_05.png)
+probamos cambiando a otro rango de pagina
+![Tienda multicenter_06](_fig/tienda_multicenter_06.png)
+y volvemos a codificar
+![Tienda multicenter_07](_fig/tienda_multicenter_07.png)
+Probamos el url en navegador y funciona
+![Tienda multicenter_08](_fig/tienda_multicenter_08.png)
+
+Este sitio nos permite usar parseo JSON, codificacion bas64 y url ademas de transformacion de fecha y precio
+
+```{r tienda_multicenter}
+# Función para extraer datos de una página de productos de la tienda Multicenter
+extraer_datos_multicenter <- function(url) {
+  # Intentamos realizar una solicitud GET a la URL
+  respuesta <- tryCatch(
+    GET(url, user_agent = agente_usuario),
+    error = function(e) {
+      message(paste("Error al cargar:", url))  # Mostramos un mensaje en caso de error
+      return(NULL)                             # Retornamos NULL si hay un error
+    }
+  )
+
+  if (is.null(respuesta)) return(NULL)         # Si no hay respuesta, salimos de la función
+
+  print(paste("Extrayendo datos de:", url))
+  # Parseamos el contenido JSON de la respuesta
+  content <- content(respuesta, "text")
+  datos_json <- fromJSON(content)
+
+  # Seleccionamos los elementos JSON que contienen los productos
+  productos <- datos_json$data$productSearch$products
+
+  # Extraemos y retornamos la información relevante de cada producto
+  data.frame(
+    url = str_replace_all(productos$link,"portal.vtexcommercestable.com.br","www.multicenter.com"),
+    imagen = productos$items[[1]]$images[[1]]$imageUrl,
+    nombre = productos$productName,
+    precio = productos$priceRange$sellingPrice$lowPrice,
+    fecha = productos$releaseDate %>% substr(1,10) %>% ymd(),
+    tienda = "multicenter",
+    stringsAsFactors = FALSE
+  )
+}
+
+# Función para extraer datos de múltiples páginas de la tienda TOTTO
+extraer_datos_sitio_multicenter <- function(url_base, num_paginas) {
+  configurar_agente_usuario()                   # Configuramos el agente de usuario
+
+  # Creamos la lista de URLs con parámetros personalizados
+  lista_urls <- crear_lista_paginas(url_base, num_paginas, function(base, i) {
+    desde <- (i - 1) * 50
+    hasta <- i * 50
+    variables <-paste0(
+      '{"hideUnavailableItems":false,"skusFilter":"ALL","simulationBehavior":"skip","installmentCriteria":"MAX_WITHOUT_INTEREST","productOriginVtex":true,"map":"productClusterIds","query":"647","orderBy":"OrderByBestDiscountDESC","from":',
+      desde,
+      ',"to":',
+      hasta,
+      ',"selectedFacets":[{"key":"productClusterIds","value":"647"}],"operator":"and","fuzzy":"0","searchState":null,"facetsBehavior":"Static","categoryTreeBehavior":"default","withFacets":false,"advertisementOptions":{"showSponsored":true,"sponsoredCount":3,"advertisementPlacement":"top_search","repeatSponsoredProducts":true}}') %>% 
+      base64_encode() # convertimos en base64
+    extensions<-paste0(
+      '{"persistedQuery":{"version":1,"sha256Hash":"9177ba6f883473505dc99fcf2b679a6e270af6320a157f0798b92efeab98d5d3","sender":"vtex.store-resources@0.x","provider":"vtex.search-graphql@0.x"},"variables":"',
+      variables,
+      '"}') %>%
+      URLencode(reserved = T) # codificamos el url
+    paste0(url_base,"?extensions=", extensions)
+  })
+  print(lista_urls)
+  # Extraemos los datos de cada página y los combinamos en un solo data frame
+  do.call(
+    bind_rows,
+    lapply(lista_urls, extraer_datos_multicenter)
+  )
+}
+```
+
 
 # Scraping: Noticias Nacional
 
@@ -235,11 +326,16 @@ Podemos ejecutar los scrapers desde aqui
 ```{r ejecucion_y_guardado}
 # Definimos las URLs base de cada fuente
 url_base_totto <- "https://bo.totto.com/buscapagina?fq=C%3a%2f82%2f&PS=48&sl=ae85c755-2e56-4945-a435-89444d09dcb2&cc=48&sm=0&PageNumber="
+url_base_multicenter="https://www.multicenter.com/_v/segment/graphql/v1"
 url_base_deber <- "https://eldeber.com.bo/api/news/getMore"
 url_base_prensa <- "https://laprensa.bo/politica?q=views/ajax&page="
 
 # Extraemos los datos de cada sitio
-datos_productos <- extraer_datos_sitio_totto(url_base_totto, num_paginas)
+datos_productos_totto <- extraer_datos_sitio_totto(url_base_totto, num_paginas)
+datos_productos_multicenter <- extraer_datos_sitio_multicenter(url_base_multicenter, num_paginas)
+
+# Combinamos las tiendas de las distintas fuentes en un solo data frame
+datos_productos <- bind_rows(datos_productos_multicenter, datos_productos_totto)
 
 datos_noticias_deber <- extraer_datos_sitio_deber(url_base_deber, num_paginas)
 datos_noticias_prensa <- extraer_datos_sitio_prensa(url_base_prensa, num_paginas)
@@ -260,4 +356,3 @@ head(datos_productos)
 str(datos_noticias)
 head(datos_noticias)
 ```
-
