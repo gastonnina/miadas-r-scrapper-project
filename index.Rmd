@@ -1,8 +1,8 @@
 ---
 title: "Proyecto - Web Scraping"
 author: "Gaston Nina Sossa"
-output: 
-  html_document: 
+output:
+  html_document:
     toc: true
 ---
 
@@ -87,7 +87,7 @@ extraer_datos_totto <- function(url) {
 
   # Seleccionamos los elementos HTML que contienen los productos
   productos_html <- documento %>% html_elements("div._banner-title")
-  
+
   # Extraemos y retornamos la información relevante de cada producto
   data.frame(
     url = productos_html %>% html_element("a") %>% html_attr("href"),
@@ -250,11 +250,14 @@ datos_noticias <- bind_rows(datos_noticias_deber, datos_noticias_prensa)
 # Guardamos los datos extraídos en un archivo
 save(datos_productos, datos_noticias, file = "_data/datos_scrapeados.RData")
 
+```
+# Visualización de datos
+```{r estadisticas}
 # Mostrar las tablas generadas
 str(datos_productos)
 head(datos_productos)
 
 str(datos_noticias)
 head(datos_noticias)
-
 ```
+
