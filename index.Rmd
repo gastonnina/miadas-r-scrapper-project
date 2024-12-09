@@ -18,6 +18,7 @@ library(jsonlite)  # Para manejar datos JSON
 library(stringr)   # Para trabajar con cadenas de texto
 library(openssl)   # Para codificar base64
 library(lubridate) # Para fechas
+library(DT)        # Para datatables en la expostacion HTML
 ```
 
 # Configuración General
@@ -237,7 +238,7 @@ extraer_datos_deber <- function(url) {
 
   # Extraemos y retornamos la información relevante de cada noticia
   data.frame(
-    fecha = datos_json$PublicationDate,
+    fecha = datos_json$PublicationDate %>% ymd_hms(tz = "UTC"), 
     titular = datos_json$Title_en,
     medio = "El Deber",
     url = paste0(
@@ -296,7 +297,10 @@ extraer_datos_prensa <- function(url) {
 
   # Extraemos y retornamos la información relevante de cada noticia
   data.frame(
-    fecha = noticias_html %>% html_element("time") %>% html_attr("datetime"),
+    fecha = noticias_html %>%
+      html_element("time") %>%
+      html_attr("datetime") %>% 
+      ymd_hms(tz = "UTC"), # convertimos a campo tipo fecha
     titular = noticias_html %>% html_element("h2 a") %>% html_text(trim = TRUE),
     url = paste0(
       "https://laprensa.bo",
@@ -353,7 +357,9 @@ save(datos_productos, datos_noticias, file = "_data/datos_scrapeados.RData")
 # Mostrar las tablas generadas
 str(datos_productos)
 head(datos_productos)
+datatable(datos_productos)
 
 str(datos_noticias)
 head(datos_noticias)
+datatable(datos_noticias)
 ```
