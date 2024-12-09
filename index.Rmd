@@ -24,7 +24,7 @@ library(lubridate) # Para fechas
 
 ```{r configuracion_general}
 # Definimos el número de páginas a scrapear
-num_paginas <- 1
+num_paginas <- 5
 
 # Definimos el agente de usuario para simular una solicitud desde un navegador
 agente_usuario <- "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
@@ -168,7 +168,8 @@ extraer_datos_multicenter <- function(url) {
   # Extraemos y retornamos la información relevante de cada producto
   data.frame(
     url = str_replace_all(productos$link,"portal.vtexcommercestable.com.br","www.multicenter.com"),
-    imagen = productos$items[[1]]$images[[1]]$imageUrl,
+    # imagen = productos$items[[1]]$images[[1]]$imageUrl, # FIXME - issue con imagenes
+    imagen = '',
     nombre = productos$productName,
     precio = productos$priceRange$sellingPrice$lowPrice,
     fecha = productos$releaseDate %>% substr(1,10) %>% ymd(),
@@ -199,7 +200,7 @@ extraer_datos_sitio_multicenter <- function(url_base, num_paginas) {
       URLencode(reserved = T) # codificamos el url
     paste0(url_base,"?extensions=", extensions)
   })
-  print(lista_urls)
+
   # Extraemos los datos de cada página y los combinamos en un solo data frame
   do.call(
     bind_rows,
@@ -335,7 +336,7 @@ datos_productos_totto <- extraer_datos_sitio_totto(url_base_totto, num_paginas)
 datos_productos_multicenter <- extraer_datos_sitio_multicenter(url_base_multicenter, num_paginas)
 
 # Combinamos las tiendas de las distintas fuentes en un solo data frame
-datos_productos <- bind_rows(datos_productos_multicenter, datos_productos_totto)
+datos_productos <- bind_rows(datos_productos_totto, datos_productos_multicenter)
 
 datos_noticias_deber <- extraer_datos_sitio_deber(url_base_deber, num_paginas)
 datos_noticias_prensa <- extraer_datos_sitio_prensa(url_base_prensa, num_paginas)
